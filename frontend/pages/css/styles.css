@@ -280,6 +280,39 @@ input:disabled, select:disabled {
   cursor: not-allowed;
 }
 
+/* ── PASSWORD VISIBILITY TOGGLE ─────────────────────────────────────────── */
+.pw-wrap {
+  position: relative;
+  display: flex;
+}
+
+.pw-wrap input {
+  flex: 1;
+  padding-right: 38px;   /* room for the eye button */
+}
+
+.pw-eye {
+  position: absolute;
+  right: 0;
+  top: 0;
+  height: 100%;
+  width: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 0 6px 6px 0;
+  padding: 0;
+  transition: color 0.15s;
+}
+
+.pw-eye:hover {
+  color: var(--text);
+}
+
 /* ── BUTTONS ────────────────────────────────────────────────────────────── */
 .btn {
   display: inline-flex;

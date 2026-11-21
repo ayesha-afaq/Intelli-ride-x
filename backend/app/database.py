@@ -12,7 +12,7 @@ from fastapi import HTTPException
 
 conn_str = (
     "DRIVER={ODBC Driver 18 for SQL Server};"
-    "SERVER=YOUR-PC-NAME\\SQLEXPRESS;"
+    "SERVER=DESKTOP-QQUVANE\\SQLEXPRESS;"
     "DATABASE=IntelliRideX;"
     "Trusted_Connection=yes;"
     "TrustServerCertificate=yes;"

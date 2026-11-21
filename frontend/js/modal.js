@@ -10,5 +10,10 @@ function renderModal() {
         || '<tr><td colspan="4" class="empty">No changes logged</td></tr>'}</tbody></table></div>
     <button class="btn btn-ghost" id="close-modal" style="margin-top:12px">Close</button>
   </div></div>`;
+  if (m.type === 'student-detail') return `
+  <div class="modal-overlay" id="modal-overlay"><div class="modal" style="max-width:720px;width:95%">
+    ${renderStudentDetailModal(m.student)}
+    <button class="btn btn-ghost" id="close-modal" style="margin-top:16px">Close</button>
+  </div></div>`;
   return '';
 }

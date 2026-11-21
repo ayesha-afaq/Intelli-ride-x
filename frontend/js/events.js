@@ -54,6 +54,11 @@ async function handleAction(action, ds) {
       const rows = await get(`/admin/bicycles/${id}/history`);
       setState({ loading: false, modal: { type: 'bike-history', code: ds.code, rows } });
 
+    // Admin: students
+    } else if (action === 'view-student') {
+      const s = await get('/admin/students/' + id);
+      setState({ loading: false, modal: { type: 'student-detail', student: s } });
+
     // Admin: rides and forecast
     } else if (action === 'rides-page') {
       setData({ rideFilter: { ...(state.data.rideFilter || {}), offset: parseInt(ds.offset) } });
@@ -93,8 +98,15 @@ async function handleChange(kind, el) {
 
 // ── FORMS ─────────────────────────────────────────────────────────────────
 const formHandlers = {
-  login:    d => login(d.email, d.password),
-  register: d => register(d),
+  login: d => {
+    // Save draft so fields survive a re-render on error
+    setState({ data: { ...state.data, authDraft: { email: d.email, password: d.password } } });
+    return login(d.email, d.password);
+  },
+  register: d => {
+    setState({ data: { ...state.data, authDraft: { full_name: d.full_name, email: d.email, cnic: d.cnic, password: d.password } } });
+    return register(d);
+  },
 
   'end-ride': async d => {
     const res = await post('/student/end-ride/' + d.ride_id, { end_station_id: parseInt(d.end_station_id) });
@@ -122,6 +134,25 @@ const formHandlers = {
 
 // ── EVENT BINDING ─────────────────────────────────────────────────────────
 function bindEvents() {
+  document.querySelectorAll('[data-pw-toggle]').forEach(btn =>
+    btn.addEventListener('click', () => {
+      const input = document.getElementById(btn.dataset.pwToggle);
+      if (!input) return;
+      const show = input.type === 'password';
+      input.type = show ? 'text' : 'password';
+      // Swap icon: open eye when visible, eye-off when hidden
+      btn.innerHTML = show
+        ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="18" height="18">
+             <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+             <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+             <line x1="1" y1="1" x2="23" y2="23"/>
+           </svg>`
+        : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="18" height="18">
+             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+             <circle cx="12" cy="12" r="3"/>
+           </svg>`;
+    }));
+
   document.querySelectorAll('[data-tab]').forEach(el =>
     el.addEventListener('click', () => setState({ data: { ...state.data, authTab: el.dataset.tab }, error: null, success: null })));
 

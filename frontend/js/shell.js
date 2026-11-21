@@ -23,7 +23,9 @@ function renderNav(role) {
     <div class="nav-section">Insight</div>
     ${navItem('admin-analytics', icons.chart, 'Analytics')}
     ${navItem('admin-rides', icons.list, 'Trip records')}
-    ${navItem('admin-forecast', icons.chart, 'Forecast')}`;
+    ${navItem('admin-forecast', icons.chart, 'Forecast')}
+    <div class="nav-section">Users</div>
+    ${navItem('admin-students', icons.list, 'Students')}`;
   return '';
 }
 
@@ -66,6 +68,7 @@ function renderPage() {
     case 'admin-analytics': return renderAdminAnalytics();
     case 'admin-rides':     return renderAdminRides();
     case 'admin-forecast':  return renderAdminForecast();
+    case 'admin-students':  return renderAdminStudents();
     default: return `<div class="empty">Page not found</div>`;
   }
 }

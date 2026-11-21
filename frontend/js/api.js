@@ -63,6 +63,9 @@ async function loadPage(page) {
     } else if (page === 'admin-forecast') {
       const [demandSummary, runs] = await Promise.all([get('/admin/forecast/demand-summary'), get('/admin/forecast/runs')]);
       d = { demandSummary, runs };
+
+    } else if (page === 'admin-students') {
+      d = { students: await get('/admin/students') };
     }
 
     setState({ data: { ...state.data, ...d }, loading: false });

@@ -96,3 +96,66 @@ function renderAdminRides() {
     <button class="btn btn-ghost btn-sm" data-action="rides-page" data-offset="${f.offset + 20}" ${rows.length < 20 ? 'disabled' : ''}>Next</button>
   </div>`;
 }
+
+function renderAdminStudents() {
+  const students = state.data.students || [];
+  return `
+  <div class="page-header"><div class="page-title">Students</div><div class="page-sub">${students.length} registered</div></div>
+  <div class="card"><div class="table-wrap"><table>
+    <thead><tr><th>Name</th><th>Email</th><th>CNIC</th><th>Status</th><th>Joined</th><th>Rides</th><th>Total charge</th><th>Actions</th></tr></thead>
+    <tbody>${students.map(s => `
+      <tr>
+        <td>${esc(s.full_name)}</td>
+        <td class="mono">${esc(s.email)}</td>
+        <td class="mono">${fmtCnic(s.cnic)}</td>
+        <td>${statusBadge(s.is_active ? 'Active' : 'Cancelled').replace('Cancelled','Inactive')}</td>
+        <td>${fmt(s.created_at)}</td>
+        <td>${s.total_rides}</td>
+        <td class="mono">${money(s.total_charge)}</td>
+        <td><button class="btn btn-ghost btn-sm" data-action="view-student" data-id="${s.user_id}">View</button></td>
+      </tr>`).join('') || '<tr><td colspan="8" class="empty">No students</td></tr>'}
+    </tbody></table></div></div>`;
+}
+
+function renderStudentDetailModal(s) {
+  if (!s) return '<div class="empty">Loading…</div>';
+  return `
+  <div class="modal-header"><div class="modal-title">${esc(s.full_name)}</div></div>
+  <div class="modal-body">
+    <div class="stats" style="margin-bottom:16px">
+      ${statBox('Total rides', s.summary.total_rides)}
+      ${statBox('Total minutes', s.summary.total_minutes)}
+      ${statBox('Total charge', money(s.summary.total_charge))}
+    </div>
+    <table style="margin-bottom:16px;width:100%">
+      <tbody>
+        <tr><td style="color:var(--muted);width:120px">Email</td><td class="mono">${esc(s.email)}</td></tr>
+        <tr><td style="color:var(--muted)">CNIC</td><td class="mono">${fmtCnic(s.cnic)}</td></tr>
+        <tr><td style="color:var(--muted)">Status</td><td>${statusBadge(s.is_active ? 'Active' : 'Cancelled').replace('Cancelled','Inactive')}</td></tr>
+        <tr><td style="color:var(--muted)">Joined</td><td>${fmt(s.created_at)}</td></tr>
+      </tbody>
+    </table>
+    <div class="card-title">Ride history</div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>#</th><th>Bicycle</th><th>From</th><th>To</th><th>Started</th><th>Min</th><th>Charge</th><th>Status</th></tr></thead>
+      <tbody>${s.rides.map(r => `
+        <tr>
+          <td class="mono text-muted">${r.ride_id}</td>
+          <td class="mono">${esc(r.bicycle_code)}</td>
+          <td>${esc(r.start_station_name)}</td>
+          <td>${esc(r.end_station_name || '—')}</td>
+          <td>${fmt(r.start_time)}</td>
+          <td>${r.duration_minutes ?? '—'}</td>
+          <td class="mono">${r.charge == null ? '—' : money(r.charge)}</td>
+          <td>${statusBadge(r.status)}</td>
+        </tr>`).join('') || '<tr><td colspan="8" class="empty">No rides yet</td></tr>'}
+      </tbody>
+    </table></div>
+  </div>`;
+}
+
+// Format a 13-digit CNIC string as XXXXX-XXXXXXX-X
+function fmtCnic(raw) {
+  if (!raw || raw.length !== 13) return esc(raw || '—');
+  return `${raw.slice(0,5)}-${raw.slice(5,12)}-${raw.slice(12)}`;
+}

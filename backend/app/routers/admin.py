@@ -583,6 +583,144 @@ def retire_bicycle(
 
 
 # ═════════════════════════════════════════════════════════════════
+#  STUDENTS
+# ═════════════════════════════════════════════════════════════════
+
+# ── List all students ─────────────────────────────────────────────────────────
+@router.get('/students')
+def list_students(user = Depends(verify_token)):
+    """Return every student account with basic details (FR-ADMIN)."""
+
+    check_admin(user)
+
+    conn   = get_connection()
+    cursor = conn.cursor()
+
+    try:
+
+        cursor.execute(
+            '''
+            SELECT u.UserID, u.FullName, u.Email, u.CNIC, u.IsActive, u.CreatedAt,
+                   COUNT(r.RideID)                           AS TotalRides,
+                   ISNULL(SUM(r.DurationMinutes), 0)        AS TotalMinutes,
+                   ISNULL(SUM(r.Charge), 0)                 AS TotalCharge
+            FROM Users u
+            LEFT JOIN Rides r ON r.UserID = u.UserID AND r.Status = 'Completed'
+            WHERE u.Role = 'Student'
+            GROUP BY u.UserID, u.FullName, u.Email, u.CNIC, u.IsActive, u.CreatedAt
+            ORDER BY u.FullName
+            '''
+        )
+
+        return [
+            {
+                'user_id'      : r.UserID,
+                'full_name'    : r.FullName,
+                'email'        : r.Email,
+                'cnic'         : r.CNIC,
+                'is_active'    : bool(r.IsActive),
+                'created_at'   : utc_iso(r.CreatedAt),
+                'total_rides'  : r.TotalRides,
+                'total_minutes': r.TotalMinutes,
+                'total_charge' : float(r.TotalCharge),
+            }
+            for r in cursor.fetchall()
+        ]
+
+    except Exception as e:
+        raise server_error(e)
+
+    finally:
+        conn.close()
+
+
+# ── View one student ──────────────────────────────────────────────────────────
+@router.get('/students/{student_id}')
+def view_student(
+    student_id: int,
+    user = Depends(verify_token)
+):
+    """Full profile of a single student plus their recent completed rides."""
+
+    check_admin(user)
+
+    conn   = get_connection()
+    cursor = conn.cursor()
+
+    try:
+
+        cursor.execute(
+            '''
+            SELECT UserID, FullName, Email, CNIC, IsActive, CreatedAt
+            FROM Users
+            WHERE UserID = ? AND Role = 'Student'
+            ''',
+            (student_id,)
+        )
+
+        s = cursor.fetchone()
+
+        if not s:
+            raise HTTPException(status_code=404, detail='Student not found')
+
+        cursor.execute(
+            '''
+            SELECT r.RideID, b.BicycleCode,
+                   ss.Name AS StartStationName, es.Name AS EndStationName,
+                   r.StartTime, r.EndTime, r.DurationMinutes,
+                   r.RatePerMinute, r.Charge, r.Status
+            FROM Rides r
+            INNER JOIN Bicycles b  ON b.BicycleID  = r.BicycleID
+            INNER JOIN Stations ss ON ss.StationID = r.StartStationID
+            LEFT  JOIN Stations es ON es.StationID = r.EndStationID
+            WHERE r.UserID = ?
+            ORDER BY r.StartTime DESC
+            ''',
+            (student_id,)
+        )
+
+        rides = cursor.fetchall()
+
+        return {
+            'user_id'      : s.UserID,
+            'full_name'    : s.FullName,
+            'email'        : s.Email,
+            'cnic'         : s.CNIC,
+            'is_active'    : bool(s.IsActive),
+            'created_at'   : utc_iso(s.CreatedAt),
+            'summary': {
+                'total_rides'  : sum(1 for r in rides if r.Status == 'Completed'),
+                'total_minutes': sum(r.DurationMinutes or 0 for r in rides if r.Status == 'Completed'),
+                'total_charge' : float(sum(r.Charge or 0 for r in rides if r.Status == 'Completed')),
+            },
+            'rides': [
+                {
+                    'ride_id'           : r.RideID,
+                    'bicycle_code'      : r.BicycleCode,
+                    'start_station_name': r.StartStationName,
+                    'end_station_name'  : r.EndStationName,
+                    'start_time'        : utc_iso(r.StartTime),
+                    'end_time'          : utc_iso(r.EndTime),
+                    'duration_minutes'  : r.DurationMinutes,
+                    'rate_per_minute'   : float(r.RatePerMinute),
+                    'charge'            : float(r.Charge) if r.Charge is not None else None,
+                    'status'            : r.Status,
+                }
+                for r in rides
+            ],
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        raise server_error(e)
+
+    finally:
+        conn.close()
+
+
+# ═════════════════════════════════════════════════════════════════
 #  DASHBOARD AND ANALYTICS
 # ═════════════════════════════════════════════════════════════════
 
