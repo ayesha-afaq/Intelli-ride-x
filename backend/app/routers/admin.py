@@ -586,10 +586,63 @@ def retire_bicycle(
 #  STUDENTS
 # ═════════════════════════════════════════════════════════════════
 
+# University hours in UTC: 08:00–17:00 PKT  =  03:00–12:00 UTC
+_UNI_START_UTC = 3
+_UNI_END_UTC   = 12
+
+
+def _live_ride_info(cursor, user_id):
+    """
+    Returns a dict describing the student's current active ride, or None.
+    Charge and duration are calculated from the live database clock so every
+    page refresh shows an up-to-date figure.
+    over_hours is True when the ride started before 03:00 UTC or is still
+    running after 12:00 UTC (i.e. outside 08:00–17:00 PKT).
+    """
+    cursor.execute(
+        '''
+        SELECT r.RideID, r.StartTime, r.RatePerMinute,
+               b.BicycleCode, ss.Name AS StartStationName,
+               SYSUTCDATETIME() AS Now
+        FROM Rides r
+        INNER JOIN Bicycles b  ON b.BicycleID  = r.BicycleID
+        INNER JOIN Stations ss ON ss.StationID = r.StartStationID
+        WHERE r.UserID = ? AND r.Status = 'Active'
+        ''',
+        (user_id,)
+    )
+    row = cursor.fetchone()
+    if not row:
+        return None
+
+    from app.calculations import calculate_duration_minutes, calculate_charge
+    minutes = calculate_duration_minutes(row.StartTime, row.Now)
+    charge  = float(calculate_charge(minutes, row.RatePerMinute))
+
+    start_hour   = row.StartTime.hour
+    now_hour     = row.Now.hour
+    elapsed_mins = int((row.Now - row.StartTime).total_seconds() / 60)
+    over_hours   = (start_hour < 3 or now_hour >= 12 or elapsed_mins > 540)
+
+    return {
+        'ride_id'           : row.RideID,
+        'bicycle_code'      : row.BicycleCode,
+        'start_station_name': row.StartStationName,
+        'start_time'        : utc_iso(row.StartTime),
+        'live_minutes'      : minutes,
+        'live_charge'       : charge,
+        'rate_per_minute'   : float(row.RatePerMinute),
+        'over_hours'        : over_hours,
+    }
+
+
 # ── List all students ─────────────────────────────────────────────────────────
 @router.get('/students')
 def list_students(user = Depends(verify_token)):
-    """Return every student account with basic details (FR-ADMIN)."""
+    """
+    Every student with completed-ride totals plus a live active-ride snapshot.
+    Total rides = completed + 1 if a ride is currently active.
+    """
 
     check_admin(user)
 
@@ -601,31 +654,38 @@ def list_students(user = Depends(verify_token)):
         cursor.execute(
             '''
             SELECT u.UserID, u.FullName, u.Email, u.CNIC, u.IsActive, u.CreatedAt,
-                   COUNT(r.RideID)                           AS TotalRides,
-                   ISNULL(SUM(r.DurationMinutes), 0)        AS TotalMinutes,
-                   ISNULL(SUM(r.Charge), 0)                 AS TotalCharge
+                   u.PenaltyRideID,
+                   COUNT(r.RideID)                    AS CompletedRides,
+                   ISNULL(SUM(r.DurationMinutes), 0)  AS TotalMinutes,
+                   ISNULL(SUM(r.Charge), 0)           AS TotalCharge
             FROM Users u
             LEFT JOIN Rides r ON r.UserID = u.UserID AND r.Status = 'Completed'
             WHERE u.Role = 'Student'
-            GROUP BY u.UserID, u.FullName, u.Email, u.CNIC, u.IsActive, u.CreatedAt
+            GROUP BY u.UserID, u.FullName, u.Email, u.CNIC, u.IsActive, u.CreatedAt, u.PenaltyRideID
             ORDER BY u.FullName
-            '''
+            ''',
         )
 
-        return [
-            {
-                'user_id'      : r.UserID,
-                'full_name'    : r.FullName,
-                'email'        : r.Email,
-                'cnic'         : r.CNIC,
-                'is_active'    : bool(r.IsActive),
-                'created_at'   : utc_iso(r.CreatedAt),
-                'total_rides'  : r.TotalRides,
-                'total_minutes': r.TotalMinutes,
-                'total_charge' : float(r.TotalCharge),
-            }
-            for r in cursor.fetchall()
-        ]
+        rows = cursor.fetchall()
+        result = []
+
+        for r in rows:
+            active = _live_ride_info(cursor, r.UserID)
+            result.append({
+                'user_id'        : r.UserID,
+                'full_name'      : r.FullName,
+                'email'          : r.Email,
+                'cnic'           : r.CNIC,
+                'is_active'      : bool(r.IsActive),
+                'created_at'     : utc_iso(r.CreatedAt),
+                'penalty_ride_id': r.PenaltyRideID,
+                'total_rides'    : r.CompletedRides + (1 if active else 0),
+                'total_minutes'  : r.TotalMinutes,
+                'total_charge'   : float(r.TotalCharge) + (active['live_charge'] if active else 0),
+                'active_ride'    : active,
+            })
+
+        return result
 
     except Exception as e:
         raise server_error(e)
@@ -640,7 +700,7 @@ def view_student(
     student_id: int,
     user = Depends(verify_token)
 ):
-    """Full profile of a single student plus their recent completed rides."""
+    """Full profile with all rides. Active ride shows live charge and over-hours flag."""
 
     check_admin(user)
 
@@ -651,7 +711,7 @@ def view_student(
 
         cursor.execute(
             '''
-            SELECT UserID, FullName, Email, CNIC, IsActive, CreatedAt
+            SELECT UserID, FullName, Email, CNIC, IsActive, CreatedAt, PenaltyRideID
             FROM Users
             WHERE UserID = ? AND Role = 'Student'
             ''',
@@ -681,39 +741,108 @@ def view_student(
 
         rides = cursor.fetchall()
 
-        return {
-            'user_id'      : s.UserID,
-            'full_name'    : s.FullName,
-            'email'        : s.Email,
-            'cnic'         : s.CNIC,
-            'is_active'    : bool(s.IsActive),
-            'created_at'   : utc_iso(s.CreatedAt),
-            'summary': {
-                'total_rides'  : sum(1 for r in rides if r.Status == 'Completed'),
-                'total_minutes': sum(r.DurationMinutes or 0 for r in rides if r.Status == 'Completed'),
-                'total_charge' : float(sum(r.Charge or 0 for r in rides if r.Status == 'Completed')),
-            },
-            'rides': [
-                {
+        # Live snapshot for the active ride (if any)
+        active = _live_ride_info(cursor, student_id)
+
+        completed_minutes = sum(r.DurationMinutes or 0 for r in rides if r.Status == 'Completed')
+        completed_charge  = float(sum(r.Charge or 0 for r in rides if r.Status == 'Completed'))
+
+        def ride_dict(r):
+            if r.Status == 'Active' and active:
+                return {
                     'ride_id'           : r.RideID,
                     'bicycle_code'      : r.BicycleCode,
                     'start_station_name': r.StartStationName,
-                    'end_station_name'  : r.EndStationName,
+                    'end_station_name'  : None,
                     'start_time'        : utc_iso(r.StartTime),
-                    'end_time'          : utc_iso(r.EndTime),
-                    'duration_minutes'  : r.DurationMinutes,
+                    'end_time'          : None,
+                    'duration_minutes'  : active['live_minutes'],
                     'rate_per_minute'   : float(r.RatePerMinute),
-                    'charge'            : float(r.Charge) if r.Charge is not None else None,
-                    'status'            : r.Status,
+                    'charge'            : active['live_charge'],
+                    'status'            : 'Active',
+                    'over_hours'        : active['over_hours'],
                 }
-                for r in rides
-            ],
+            return {
+                'ride_id'           : r.RideID,
+                'bicycle_code'      : r.BicycleCode,
+                'start_station_name': r.StartStationName,
+                'end_station_name'  : r.EndStationName,
+                'start_time'        : utc_iso(r.StartTime),
+                'end_time'          : utc_iso(r.EndTime),
+                'duration_minutes'  : r.DurationMinutes,
+                'rate_per_minute'   : float(r.RatePerMinute),
+                'charge'            : float(r.Charge) if r.Charge is not None else None,
+                'status'            : r.Status,
+                'over_hours'        : False,
+            }
+
+        return {
+            'user_id'        : s.UserID,
+            'full_name'      : s.FullName,
+            'email'          : s.Email,
+            'cnic'           : s.CNIC,
+            'is_active'      : bool(s.IsActive),
+            'created_at'     : utc_iso(s.CreatedAt),
+            'penalty_ride_id': s.PenaltyRideID,
+            'active_ride'    : active,
+            'summary': {
+                'total_rides'  : len(rides),
+                'total_minutes': completed_minutes + (active['live_minutes'] if active else 0),
+                'total_charge' : completed_charge  + (active['live_charge']  if active else 0),
+            },
+            'rides': [ride_dict(r) for r in rides],
         }
 
     except HTTPException:
         raise
 
     except Exception as e:
+        raise server_error(e)
+
+    finally:
+        conn.close()
+
+
+# ── Remove a student's penalty ────────────────────────────────────────────────
+@router.delete('/students/{student_id}/penalty')
+def remove_penalty(
+    student_id: int,
+    user = Depends(verify_token)
+):
+    """Admin clears a penalty so the student can book again."""
+
+    check_admin(user)
+
+    conn   = get_connection()
+    cursor = conn.cursor()
+
+    try:
+
+        cursor.execute(
+            'SELECT PenaltyRideID FROM Users WHERE UserID = ? AND Role = ?',
+            (student_id, 'Student')
+        )
+        row = cursor.fetchone()
+
+        if not row:
+            raise HTTPException(status_code=404, detail='Student not found')
+
+        if row.PenaltyRideID is None:
+            raise HTTPException(status_code=400, detail='This student has no active penalty')
+
+        cursor.execute(
+            'UPDATE Users SET PenaltyRideID = NULL WHERE UserID = ?',
+            (student_id,)
+        )
+        conn.commit()
+
+        return {'success': True, 'message': 'Penalty removed. Student can book again.'}
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        conn.rollback()
         raise server_error(e)
 
     finally:

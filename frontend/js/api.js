@@ -32,7 +32,11 @@ async function loadPage(page) {
     let d = {};
 
     if (page === 'student-book') {
-      d = { stations: await get('/student/stations'), avail: {} };
+      const [stations, penaltyRow] = await Promise.all([
+        get('/student/stations'),
+        get('/student/penalty/' + u.user_id),
+      ]);
+      d = { stations, avail: {}, penalty: penaltyRow.penalty_ride_id };
 
     } else if (page === 'student-ride') {
       const [bookings, active, stations] = await Promise.all([

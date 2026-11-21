@@ -99,29 +99,90 @@ function renderAdminRides() {
 
 function renderAdminStudents() {
   const students = state.data.students || [];
+
+  // Build a strip for every student currently riding outside university hours
+  const overHours  = students.filter(s => s.active_ride && s.active_ride.over_hours);
+  const penalised  = students.filter(s => s.penalty_ride_id);
+
+  const overHoursStrip = overHours.length ? `
+  <div class="alert alert-error" style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">
+    <div style="font-weight:600;font-size:14px">⚠ Outside university hours — ${overHours.length} ride${overHours.length > 1 ? 's' : ''} still ongoing</div>
+    ${overHours.map(s => `
+    <div style="font-size:13px">
+      <strong>${esc(s.full_name)}</strong> — riding since ${fmt(s.active_ride.start_time)},
+      current charge <span class="mono">${money(s.active_ride.live_charge)}</span>
+    </div>`).join('')}
+  </div>` : '';
+
+  const penaltyStrip = penalised.length ? `
+  <div class="alert" style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.4);border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;flex-direction:column;gap:6px">
+    <div style="font-weight:600;font-size:14px">🚫 ${penalised.length} student${penalised.length > 1 ? 's' : ''} with active penalty — cannot book until cleared</div>
+    ${penalised.map(s => `
+    <div style="font-size:13px;display:flex;align-items:center;gap:10px">
+      <strong>${esc(s.full_name)}</strong> — penalised for ride #${s.penalty_ride_id}
+      <button class="btn btn-danger btn-sm" data-action="remove-penalty" data-id="${s.user_id}" data-name="${esc(s.full_name)}">Remove penalty</button>
+    </div>`).join('')}
+  </div>` : '';
+
   return `
   <div class="page-header"><div class="page-title">Students</div><div class="page-sub">${students.length} registered</div></div>
+  ${overHoursStrip}
+  ${penaltyStrip}
   <div class="card"><div class="table-wrap"><table>
     <thead><tr><th>Name</th><th>Email</th><th>CNIC</th><th>Status</th><th>Joined</th><th>Rides</th><th>Total charge</th><th>Actions</th></tr></thead>
-    <tbody>${students.map(s => `
+    <tbody>${students.map(s => {
+      const a = s.active_ride;
+      return `
       <tr>
         <td>${esc(s.full_name)}</td>
         <td class="mono">${esc(s.email)}</td>
         <td class="mono">${fmtCnic(s.cnic)}</td>
         <td>${statusBadge(s.is_active ? 'Active' : 'Cancelled').replace('Cancelled','Inactive')}</td>
         <td>${fmt(s.created_at)}</td>
-        <td>${s.total_rides}</td>
-        <td class="mono">${money(s.total_charge)}</td>
-        <td><button class="btn btn-ghost btn-sm" data-action="view-student" data-id="${s.user_id}">View</button></td>
-      </tr>`).join('') || '<tr><td colspan="8" class="empty">No students</td></tr>'}
+        <td>
+          ${s.total_rides}
+          ${a ? `<span class="badge badge-blue" style="margin-left:4px">Riding</span>` : ''}
+          ${a && a.over_hours ? `<span class="badge badge-red" style="margin-left:2px" title="Outside university hours (8am–5pm)">⚠ Over hours</span>` : ''}
+          ${s.penalty_ride_id ? `<span class="badge badge-red" style="margin-left:2px">🚫 Penalised</span>` : ''}
+        </td>
+        <td class="mono">
+          ${money(s.total_charge)}
+          ${a ? `<div style="font-size:11px;color:var(--text-muted)">incl. live ${money(a.live_charge)}</div>` : ''}
+        </td>
+        <td><button class="btn btn-ghost btn-sm" data-action="view-student" data-id="${s.user_id}">View</button>
+          ${s.penalty_ride_id ? `<button class="btn btn-danger btn-sm" style="margin-left:4px" data-action="remove-penalty" data-id="${s.user_id}" data-name="${esc(s.full_name)}">Remove penalty</button>` : ''}
+        </td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="8" class="empty">No students</td></tr>'}
     </tbody></table></div></div>`;
 }
 
 function renderStudentDetailModal(s) {
   if (!s) return '<div class="empty">Loading…</div>';
+  const a = s.active_ride;
   return `
   <div class="modal-header"><div class="modal-title">${esc(s.full_name)}</div></div>
   <div class="modal-body">
+    ${a && a.over_hours ? `
+    <div class="alert alert-error" style="margin-bottom:16px">
+      ⚠ <strong>Outside university hours</strong> — this ride started or is running past the allowed
+      window of 08:00–17:00 PKT. A penalty may apply.
+    </div>` : ''}
+    ${s.penalty_ride_id ? `
+    <div class="alert" style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.4);border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:12px">
+      <span style="font-size:13.5px">🚫 <strong>Penalty active</strong> — suspended for ride #${s.penalty_ride_id}. Cannot book until cleared.</span>
+      <button class="btn btn-danger btn-sm" data-action="remove-penalty" data-id="${s.user_id}" data-name="${esc(s.full_name)}">Remove penalty</button>
+    </div>` : ''}
+    ${a ? `
+    <div class="alert" style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin-bottom:16px">
+      <strong>Ride in progress</strong> — bicycle <span class="mono">${esc(a.bicycle_code)}</span>
+      from <strong>${esc(a.start_station_name)}</strong> · started ${fmt(a.start_time)}<br>
+      <span style="font-size:13px;color:var(--text-muted)">
+        Running charge: <span class="mono">${money(a.live_charge)}</span>
+        &nbsp;·&nbsp; ${a.live_minutes} min so far
+        &nbsp;·&nbsp; ${money(a.rate_per_minute)}/min
+      </span>
+    </div>` : ''}
     <div class="stats" style="margin-bottom:16px">
       ${statBox('Total rides', s.summary.total_rides)}
       ${statBox('Total minutes', s.summary.total_minutes)}
@@ -139,14 +200,18 @@ function renderStudentDetailModal(s) {
     <div class="table-wrap"><table>
       <thead><tr><th>#</th><th>Bicycle</th><th>From</th><th>To</th><th>Started</th><th>Min</th><th>Charge</th><th>Status</th></tr></thead>
       <tbody>${s.rides.map(r => `
-        <tr>
+        <tr ${r.status === 'Active' ? 'style="background:rgba(96,165,250,.07)"' : ''}>
           <td class="mono text-muted">${r.ride_id}</td>
           <td class="mono">${esc(r.bicycle_code)}</td>
           <td>${esc(r.start_station_name)}</td>
           <td>${esc(r.end_station_name || '—')}</td>
           <td>${fmt(r.start_time)}</td>
-          <td>${r.duration_minutes ?? '—'}</td>
-          <td class="mono">${r.charge == null ? '—' : money(r.charge)}</td>
+          <td>${r.duration_minutes ?? '—'}${r.status === 'Active' ? ' <span class="text-muted">(live)</span>' : ''}</td>
+          <td class="mono">
+            ${r.charge == null ? '—' : money(r.charge)}
+            ${r.status === 'Active' ? ' <span class="text-muted">(live)</span>' : ''}
+            ${r.over_hours ? ' <span class="badge badge-red" style="font-size:10px">⚠ Over hours</span>' : ''}
+          </td>
           <td>${statusBadge(r.status)}</td>
         </tr>`).join('') || '<tr><td colspan="8" class="empty">No rides yet</td></tr>'}
       </tbody>

@@ -1,9 +1,25 @@
 // ─────────────────────────── STUDENT PAGES ───────────────────────────────
 function renderStudentBook() {
   const stations = state.data.stations || [], av = state.data.avail || {};
-  return `
-  <div class="page-header"><div class="page-title">Book a bicycle</div>
-    <div class="page-sub">Check a station, then book. You can hold one booking at a time.</div></div>
+  const penalty  = state.data.penalty;   // set by loadPage('student-book')
+
+  let html = `<div class="page-header"><div class="page-title">Book a bicycle</div>
+    <div class="page-sub">Check a station, then book. You can hold one booking at a time.</div></div>`;
+
+  if (penalty) {
+    html += `
+    <div class="alert alert-error" style="display:flex;align-items:flex-start;gap:10px;margin-bottom:16px;font-size:14px">
+      <span style="font-size:22px;line-height:1">🚫</span>
+      <div>
+        <strong>Booking suspended — penalty active</strong><br>
+        Your account has been penalised because ride #${penalty} was returned outside university
+        hours (08:00–17:00 PKT). You cannot book a bicycle until an administrator removes the penalty.
+        Please visit the admin office.
+      </div>
+    </div>`;
+  }
+
+  html += `
   <div class="card"><div class="table-wrap"><table>
     <thead><tr><th>Station</th><th>Availability</th><th>Actions</th></tr></thead>
     <tbody>${stations.map(s => `
@@ -14,10 +30,12 @@ function renderStudentBook() {
           : '<span class="text-muted">Not checked</span>'}</td>
         <td class="flex gap-2">
           <button class="btn btn-ghost btn-sm" data-action="check-avail" data-id="${s.station_id}">Check</button>
-          <button class="btn btn-primary btn-sm" data-action="book" data-id="${s.station_id}">Book</button>
+          <button class="btn btn-primary btn-sm" data-action="book" data-id="${s.station_id}" ${penalty ? 'disabled title="Penalty active"' : ''}>Book</button>
         </td>
       </tr>`).join('') || '<tr><td colspan="3" class="empty">No stations yet</td></tr>'}
     </tbody></table></div></div>`;
+
+  return html;
 }
 
 function renderStudentRide() {
@@ -25,11 +43,36 @@ function renderStudentRide() {
   const booking = (d.bookings || []).find(b => b.status === 'Active');
   let html = `<div class="page-header"><div class="page-title">My ride</div></div>`;
 
+  // Always show a ride-status banner while a ride is active
+  if (a) {
+    if (a.over_hours) {
+      html += `
+      <div class="alert alert-error" style="display:flex;align-items:flex-start;gap:10px;margin-bottom:16px;font-size:14px">
+        <span style="font-size:22px;line-height:1">⚠</span>
+        <div>
+          <strong>Outside university hours!</strong><br>
+          Your ride has gone past the allowed window of 08:00–17:00 PKT.
+          Please return the bicycle immediately to avoid a penalty.
+        </div>
+      </div>`;
+    } else {
+      html += `
+      <div class="alert" style="background:rgba(74,222,128,.08);border:1px solid rgba(74,222,128,.35);border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:14px">
+        ✅ <strong>Ride is within university hours</strong> (08:00–17:00 PKT). Please return before 17:00.
+      </div>`;
+    }
+  }
+
   if (d.lastRide) html += `
     <div class="card" style="max-width:520px">
       <div class="card-title">Ride finished</div>
       <div class="stats">${statBox('Duration', d.lastRide.duration_minutes + ' min')}${statBox('Charge', money(d.lastRide.charge))}${statBox('Returned to', d.lastRide.end_station)}</div>
       <div class="text-muted text-sm">${esc(d.lastRide.message)}</div>
+      ${d.lastRide.penalty_applied ? `
+      <div class="alert alert-error" style="margin-top:14px;font-size:13.5px">
+        🚫 <strong>Penalty applied</strong> — this ride was outside university hours (08:00–17:00 PKT).
+        Your account is now suspended from booking. Contact the administrator to have the penalty removed.
+      </div>` : ''}
     </div>`;
 
   if (a) {

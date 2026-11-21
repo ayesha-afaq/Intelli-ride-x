@@ -58,6 +58,10 @@ async function handleAction(action, ds) {
     } else if (action === 'view-student') {
       const s = await get('/admin/students/' + id);
       setState({ loading: false, modal: { type: 'student-detail', student: s } });
+    } else if (action === 'remove-penalty') {
+      if (!confirm(`Remove penalty for ${ds.name}? They will be able to book again.`)) return setState({ loading: false });
+      await del('/admin/students/' + id + '/penalty');
+      await go('admin-students', `Penalty removed for ${ds.name}`);
 
     // Admin: rides and forecast
     } else if (action === 'rides-page') {
@@ -111,7 +115,13 @@ const formHandlers = {
   'end-ride': async d => {
     const res = await post('/student/end-ride/' + d.ride_id, { end_station_id: parseInt(d.end_station_id) });
     setData({ lastRide: res });
-    await go('student-ride', 'Ride ended');
+    await go('student-ride', res.penalty_applied
+      ? '⚠ Ride ended — penalty applied. Contact admin to book again.'
+      : 'Ride ended');
+    // Also refresh penalty status on the book page cache
+    if (res.penalty_applied) {
+      setState({ data: { ...state.data, penalty: res.ride_id } });
+    }
   },
   'add-station': async d => {
     await post('/admin/stations', { name: d.name });

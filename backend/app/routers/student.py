@@ -152,6 +152,19 @@ def book_bicycle(
         if not station:
             raise HTTPException(status_code=404, detail='Station not found')
 
+        # Block booking if the student has an active penalty
+        cursor.execute(
+            'SELECT PenaltyRideID FROM Users WHERE UserID = ?',
+            (student_id,)
+        )
+        u = cursor.fetchone()
+        if u and u.PenaltyRideID is not None:
+            raise HTTPException(
+                status_code=403,
+                detail='Your account has a penalty for returning a bicycle outside university hours. '
+                       'Please contact the administrator to have it removed before booking again.'
+            )
+
         cursor.execute(
             '''
             SELECT 1
@@ -536,16 +549,29 @@ def end_ride(
 
         log_bicycle_change(cursor, ride.BicycleID, student_id, 'InUse', 'Available', None, None)
 
+        # Auto-penalty: if the ride exceeded university hours, flag the student
+        elapsed_mins = minutes
+        start_hour   = ride.StartTime.hour
+        end_hour     = now.hour
+        penalty_applied = (start_hour < 3 or end_hour >= 12 or elapsed_mins > 540)
+
+        if penalty_applied:
+            cursor.execute(
+                'UPDATE Users SET PenaltyRideID = ? WHERE UserID = ?',
+                (ride_id, student_id)
+            )
+
         conn.commit()
 
         return {
-            'success'        : True,
-            'message'        : NO_PAYMENT_NOTE,
-            'ride_id'        : ride_id,
+            'success'         : True,
+            'message'         : NO_PAYMENT_NOTE,
+            'ride_id'         : ride_id,
             'duration_minutes': minutes,
-            'rate_per_minute': float(ride.RatePerMinute),
-            'charge'         : float(charge),
-            'end_station'    : end_station.Name
+            'rate_per_minute' : float(ride.RatePerMinute),
+            'charge'          : float(charge),
+            'end_station'     : end_station.Name,
+            'penalty_applied' : penalty_applied,
         }
 
     except HTTPException:
@@ -556,6 +582,29 @@ def end_ride(
         conn.rollback()
         raise server_error(e)
 
+    finally:
+        conn.close()
+
+
+# ── Check my own penalty status ───────────────────────────────────────────────
+@router.get('/penalty/{user_id}')
+def my_penalty(
+    user_id: int,
+    user = Depends(verify_token)
+):
+    if user["role"] != "Student":
+        raise HTTPException(status_code=403, detail="Students only")
+    if user_id != user["user_id"]:
+        raise HTTPException(status_code=403, detail="Unauthorized access")
+
+    conn   = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute('SELECT PenaltyRideID FROM Users WHERE UserID = ?', (user_id,))
+        row = cursor.fetchone()
+        return {'penalty_ride_id': row.PenaltyRideID if row else None}
+    except Exception as e:
+        raise server_error(e)
     finally:
         conn.close()
 
@@ -581,7 +630,8 @@ def active_ride(
         cursor.execute(
             '''
             SELECT r.RideID, r.BookingID, r.StartTime, r.RatePerMinute,
-                   s.Name AS StartStationName, b.BicycleCode
+                   s.Name AS StartStationName, b.BicycleCode,
+                   SYSUTCDATETIME() AS Now
             FROM Rides r
             INNER JOIN Stations s ON s.StationID = r.StartStationID
             INNER JOIN Bicycles b ON b.BicycleID = r.BicycleID
@@ -595,6 +645,13 @@ def active_ride(
         if not r:
             return {'active_ride': None}
 
+        # over_hours: outside 08:00–17:00 PKT (03:00–12:00 UTC)
+        # Also flag if the ride has been going for more than 9 hours (the full university day)
+        now_hour      = r.Now.hour
+        start_hour    = r.StartTime.hour
+        elapsed_mins  = int((r.Now - r.StartTime).total_seconds() / 60)
+        over_hours    = (start_hour < 3 or now_hour >= 12 or elapsed_mins > 540)
+
         return {
             'active_ride': {
                 'ride_id'           : r.RideID,
@@ -603,6 +660,7 @@ def active_ride(
                 'rate_per_minute'   : float(r.RatePerMinute),
                 'start_station_name': r.StartStationName,
                 'bicycle_code'      : r.BicycleCode,
+                'over_hours'        : over_hours,
             }
         }
 
